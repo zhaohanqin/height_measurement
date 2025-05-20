@@ -3,11 +3,12 @@ import numpy as np
 import face_recognition
 import os
 import tkinter as tk
-from tkinter import ttk
+from tkinter import ttk, messagebox
 import json
 from datetime import datetime
 import threading
 from PIL import Image, ImageTk
+from ultralytics import YOLO  # 添加YOLO导入
 
 class HeightMeasurementApp:
     def __init__(self):
@@ -21,6 +22,12 @@ class HeightMeasurementApp:
         self.recording = False
         self.measurement_history = []
         
+        # 人脸识别相关
+        self.known_face_encodings = []
+        self.known_face_names = []
+        self.face_recognition_mode = False
+        self.face_recognition_initialized = False
+        
         # 创建主窗口
         self.root = tk.Tk()
         self.root.title("身高测量系统")
@@ -31,9 +38,8 @@ class HeightMeasurementApp:
         if not self.cap.isOpened():
             raise ValueError("无法打开摄像头")
             
-        # 初始化HOG检测器
-        self.hog = cv2.HOGDescriptor()
-        self.hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+        # 初始化YOLO模型
+        self.model = YOLO("yolov8n.pt")
         
         # 加载配置
         self.load_config()
@@ -80,12 +86,78 @@ class HeightMeasurementApp:
         self.save_btn = ttk.Button(control_frame, text="保存设置", command=self.save_config)
         self.save_btn.grid(row=3, column=1, padx=5, pady=5)
         
+        # 添加人脸识别相关按钮
+        self.face_recognition_btn = ttk.Button(control_frame, text="添加人脸", command=self.add_face)
+        self.face_recognition_btn.grid(row=4, column=0, padx=5, pady=5)
+        
+        self.toggle_face_recognition_btn = ttk.Button(control_frame, text="开启人脸识别", 
+                                                    command=self.toggle_face_recognition)
+        self.toggle_face_recognition_btn.grid(row=4, column=1, padx=5, pady=5)
+        
         # 测量历史显示
         history_frame = ttk.LabelFrame(main_frame, text="测量历史")
         history_frame.grid(row=1, column=1, padx=5, pady=5, sticky="nsew")
         
         self.history_text = tk.Text(history_frame, height=10, width=40)
         self.history_text.pack(padx=5, pady=5, fill=tk.BOTH, expand=True)
+
+    def add_face(self):
+        """添加新的人脸特征"""
+        ret, frame = self.cap.read()
+        if not ret:
+            messagebox.showerror("错误", "无法获取摄像头画面")
+            return
+            
+        # 转换为RGB格式
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
+        # 检测人脸
+        face_locations = face_recognition.face_locations(rgb_frame)
+        if not face_locations:
+            messagebox.showerror("错误", "未检测到人脸")
+            return
+            
+        # 获取人脸编码
+        face_encoding = face_recognition.face_encodings(rgb_frame, face_locations)[0]
+        
+        # 获取用户输入的名字
+        name = tk.simpledialog.askstring("输入", "请输入这个人的名字：")
+        if name:
+            self.known_face_encodings.append(face_encoding)
+            self.known_face_names.append(name)
+            messagebox.showinfo("成功", f"已添加 {name} 的人脸特征")
+            
+            # 保存人脸特征
+            self.save_face_data()
+
+    def save_face_data(self):
+        """保存人脸特征数据"""
+        face_data = {
+            'encodings': [enc.tolist() for enc in self.known_face_encodings],
+            'names': self.known_face_names
+        }
+        with open('face_data.json', 'w') as f:
+            json.dump(face_data, f)
+
+    def load_face_data(self):
+        """加载保存的人脸特征数据"""
+        try:
+            with open('face_data.json', 'r') as f:
+                face_data = json.load(f)
+                self.known_face_encodings = [np.array(enc) for enc in face_data['encodings']]
+                self.known_face_names = face_data['names']
+                self.face_recognition_initialized = True
+        except FileNotFoundError:
+            pass
+
+    def toggle_face_recognition(self):
+        """切换人脸识别模式"""
+        self.face_recognition_mode = not self.face_recognition_mode
+        if self.face_recognition_mode and not self.face_recognition_initialized:
+            self.load_face_data()
+        self.toggle_face_recognition_btn.configure(
+            text="关闭人脸识别" if self.face_recognition_mode else "开启人脸识别"
+        )
 
     def video_loop(self):
         while self.running:
@@ -111,21 +183,50 @@ class HeightMeasurementApp:
 
     def process_frame(self, frame):
         frame_display = frame.copy()
-        frame_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
-        # 人物检测
-        (rects, weights) = self.hog.detectMultiScale(frame_gray, winStride=(4, 4),
-                                                    padding=(8, 8), scale=1.05)
-        
+        # 使用YOLO进行人体检测
+        results = self.model(frame)[0]
         measurements = []
-        for (x, y, w, h) in rects:
-            if h > 50 and h < frame.shape[0] * 0.90:
+        
+        # 获取图像尺寸
+        frame_height, frame_width = frame.shape[:2]
+        
+        for result in results.boxes:
+            cls_id = int(result.cls)
+            confidence = float(result.conf[0])  # 获取检测置信度
+            
+            # 只处理"person"类别且置信度大于0.5的检测结果
+            if self.model.names[cls_id] != "person" or confidence < 0.5:
+                continue
+                
+            x1, y1, x2, y2 = map(int, result.xyxy[0])
+            w = x2 - x1
+            h = y2 - y1
+            
+            # 计算边界框的宽高比
+            aspect_ratio = h / w
+            
+            # 计算边界框底部到图像底部的距离
+            bottom_margin = frame_height - y2
+            
+            # 增强的过滤条件：
+            # 1. 高度在合理范围内（大于50像素且小于图像高度的90%）
+            # 2. 宽高比在合理范围内（正常人体比例约为2.0-3.5）
+            # 3. 边界框底部接近图像底部（允许20像素的误差）
+            # 4. 边界框不能太靠近图像左右边缘（至少20像素）
+            # 5. 边界框顶部不能太靠近图像顶部（至少20像素）
+            if (h > 50 and h < frame_height * 0.90 and  # 高度条件
+                1.8 < aspect_ratio < 3.5 and  # 宽高比条件
+                bottom_margin < 20 and  # 底部接近图像底部
+                x1 > 20 and x2 < frame_width - 20 and  # 左右边缘条件
+                y1 > 20):  # 顶部条件
+                
                 # 绘制检测框
-                cv2.rectangle(frame_display, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                cv2.rectangle(frame_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 
                 # 计算身高
                 if self.ground_level:
-                    pixel_height = self.ground_level - y
+                    pixel_height = self.ground_level - y1
                 else:
                     pixel_height = h
                 
@@ -133,16 +234,42 @@ class HeightMeasurementApp:
                 estimated_distance = (self.KNOWN_PERSON_WIDTH_CM * self.FOCAL_LENGTH_PIXELS) / w
                 height_cm = (pixel_height * estimated_distance) / self.FOCAL_LENGTH_PIXELS
                 
-                # 显示结果
-                height_text = f"{height_cm:.1f} cm"
-                cv2.putText(frame_display, height_text, (x, y - 10),
+                # 显示结果（添加置信度信息）
+                height_text = f"{height_cm:.1f} cm (conf: {confidence:.2f})"
+                cv2.putText(frame_display, height_text, (x1, y1 - 10),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
                 
                 measurements.append({
                     'height': height_cm,
                     'distance': estimated_distance,
+                    'confidence': confidence,
                     'timestamp': datetime.now().isoformat()
                 })
+        
+        # 人脸识别
+        if self.face_recognition_mode and self.face_recognition_initialized:
+            # 将摄像头捕获的帧转换为RGB格式
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            
+            # 检测人脸位置
+            face_locations = face_recognition.face_locations(rgb_frame)
+            # 获取人脸编码
+            face_encodings = face_recognition.face_encodings(rgb_frame, face_locations)
+            
+            # 识别每个人脸
+            for (top, right, bottom, left), face_encoding in zip(face_locations, face_encodings):
+                # 与已知人脸比较
+                matches = face_recognition.compare_faces(self.known_face_encodings, face_encoding, tolerance=0.6)
+                name = "未知"
+                
+                if True in matches:
+                    first_match_index = matches.index(True)
+                    name = self.known_face_names[first_match_index]
+                
+                # 绘制人脸框和名字
+                cv2.rectangle(frame_display, (left, top), (right, bottom), (0, 255, 0), 2)
+                cv2.putText(frame_display, name, (left, top - 10),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         
         # 显示校准模式和地面线
         if self.calibration_mode:
