@@ -8,7 +8,7 @@ model = YOLO("yolov8n.pt")
 
 # 校准文件路径
 calibration_file = "calibration.txt"
-reference_face_file = "reference_face.jpg"
+reference_face_file = "my_face.jpg"
 
 # A4纸标准尺寸（厘米）
 A4_WIDTH = 21.0
@@ -45,7 +45,7 @@ def load_or_create_reference_face():
             keypoints, descriptors = sift.detectAndCompute(face_roi, None)
             if descriptors is not None:
                 reference_face_features = descriptors
-                print("✅ 已加载参考人脸特征")
+                print("已加载参考人脸特征")
                 return True
     else:
         print("⚠️ 未找到参考人脸图片，请提供一张清晰的正面照片")
@@ -63,7 +63,7 @@ def load_or_create_reference_face():
             if cv2.waitKey(1) & 0xFF == ord(' '):
                 # 保存图片
                 cv2.imwrite(reference_face_file, frame)
-                print("✅ 已保存参考照片")
+                print("已保存参考照片")
                 break
         
         cap.release()
@@ -79,10 +79,10 @@ def load_or_create_reference_face():
             keypoints, descriptors = sift.detectAndCompute(face_roi, None)
             if descriptors is not None:
                 reference_face_features = descriptors
-                print("✅ 已提取参考人脸特征")
+                print("已提取参考人脸特征")
                 return True
     
-    print("❌ 无法提取参考人脸特征")
+    print("无法提取参考人脸特征")
     return False
 
 def detect_face(frame):
@@ -198,12 +198,12 @@ def calibrate_with_a4(frame):
 if os.path.exists(calibration_file):
     with open(calibration_file, "r", encoding="utf-8") as f:
         pixel_to_cm_ratio = float(f.read())
-    print(f"📂 已加载标定值：1 像素 ≈ {pixel_to_cm_ratio:.4f} cm")
+    print(f"已加载标定值:1 像素 ≈ {pixel_to_cm_ratio:.4f} cm")
     calibrated = True
 else:
     pixel_to_cm_ratio = None
     calibrated = False
-    print("⚠️ 请将A4纸放在画面中，系统将自动完成标定。")
+    print("请将A4纸放在画面中,系统将自动完成标定。")
 
 # 加载参考人脸特征
 face_recognized = load_or_create_reference_face()
@@ -242,7 +242,7 @@ while True:
         if success:
             pixel_to_cm_ratio = ratio
             calibrated = True
-            print(f"✅ 标定成功:1 像素 ≈ {pixel_to_cm_ratio:.4f} cm(已保存)")
+            print(f"标定成功:1 像素 ≈ {pixel_to_cm_ratio:.4f} cm(已保存)")
             # 在图像上绘制A4纸轮廓
             cv2.drawContours(frame, [contour], -1, (0, 255, 0), 2)
             cv2.putText(frame, "A4纸检测成功", (10, 30),
