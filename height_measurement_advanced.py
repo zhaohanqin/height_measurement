@@ -3,7 +3,7 @@ import os
 import numpy as np
 from collections import deque
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from tkinter import ttk, filedialog, messagebox, simpledialog
 import json
 from datetime import datetime
 import threading
@@ -31,6 +31,11 @@ class AdvancedHeightMeasurementApp:
         self.running = True
         self.current_frame = None
         self.processed_frame = None
+        
+        # 人脸标记相关
+        self.face_marking_mode = False
+        self.face_name = ""
+        self.marked_faces = {}  # 存储标记的人脸位置和名称
         
         # 创建主窗口
         self.root = tk.Tk()
@@ -106,6 +111,16 @@ class AdvancedHeightMeasurementApp:
         # 右侧控制面板
         right_frame = ttk.Frame(main_frame, width=300)
         right_frame.pack(side=tk.RIGHT, fill=tk.BOTH, padx=5, pady=5)
+        
+        # 控制面板 - 人脸标记
+        face_frame = ttk.LabelFrame(right_frame, text="人脸标记")
+        face_frame.pack(fill=tk.X, padx=5, pady=5)
+        
+        self.mark_face_btn = ttk.Button(face_frame, text="开始标记人脸", command=self.toggle_face_marking)
+        self.mark_face_btn.grid(row=0, column=0, padx=5, pady=5)
+        
+        self.clear_marks_btn = ttk.Button(face_frame, text="清除所有标记", command=self.clear_face_marks)
+        self.clear_marks_btn.grid(row=0, column=1, padx=5, pady=5)
         
         # 控制面板 - 标定
         calibration_frame = ttk.LabelFrame(right_frame, text="标定")
@@ -239,6 +254,7 @@ class AdvancedHeightMeasurementApp:
     def process_frame(self, frame):
         """处理视频帧，返回处理后的帧和测量结果"""
         frame_display = frame.copy()
+        self.current_frame = frame.copy()  # 保存当前帧用于人脸标记
         
         # 运行YOLO检测
         results = self.model(frame, verbose=False)[0]
@@ -247,7 +263,7 @@ class AdvancedHeightMeasurementApp:
         persons = []
         measurements = []
         
-        # 检测人体
+        # 检测人体和人脸
         for result in results.boxes:
             conf = float(result.conf)
             
@@ -262,62 +278,77 @@ class AdvancedHeightMeasurementApp:
                 continue
                 
             cls_id = int(result.cls)
-            if self.model.names[cls_id] != "person":
-                continue
+            class_name = self.model.names[cls_id]
             
             # 获取边界框
             x1, y1, x2, y2 = map(int, result.xyxy[0])
-            bbox_height = y2 - y1
-            bbox_width = x2 - x1
-            aspect_ratio = bbox_height / bbox_width
             
-            # 过滤不合理的人像
-            if y2 >= frame_height - 50 and aspect_ratio > 1.5:
-                persons.append((x1, y1, x2, y2, bbox_height, bbox_width))
+            # 处理人体检测
+            if class_name == "person":
+                bbox_height = y2 - y1
+                bbox_width = x2 - x1
+                aspect_ratio = bbox_height / bbox_width
                 
-                # 计算身高
-                if self.calibrated:
-                    if self.ground_level:
-                        pixel_height = self.ground_level - y1
-                    else:
-                        pixel_height = bbox_height
+                # 过滤不合理的人像
+                if y2 >= frame_height - 50 and aspect_ratio > 1.5:
+                    persons.append((x1, y1, x2, y2, bbox_height, bbox_width))
+                    
+                    # 计算身高
+                    if self.calibrated:
+                        if self.ground_level:
+                            pixel_height = self.ground_level - y1
+                        else:
+                            pixel_height = bbox_height
+                            
+                        estimated_height = pixel_height * self.pixel_to_cm_ratio
+                        self.height_history.append(estimated_height)
+                        avg_height = np.mean(self.height_history) if self.height_history else estimated_height
                         
-                    estimated_height = pixel_height * self.pixel_to_cm_ratio
-                    self.height_history.append(estimated_height)
-                    avg_height = np.mean(self.height_history) if self.height_history else estimated_height
-                    
-                    # 距离估计（基于宽度）
-                    estimated_distance = None
-                    if self.pixel_to_cm_ratio:
-                        estimated_distance = (170 * 400) / (self.pixel_to_cm_ratio * bbox_height)
-                    
-                    # 记录结果
-                    timestamp = datetime.now().strftime("%H:%M:%S")
-                    measurements.append({
-                        'height': avg_height,
-                        'raw_height': estimated_height,
-                        'distance': estimated_distance,
-                        'timestamp': timestamp
-                    })
-                    
-                    # 显示结果
-                    label = f"{avg_height:.1f} cm"
-                    if estimated_distance:
-                        label += f", {estimated_distance:.1f} cm"
+                        # 距离估计（基于宽度）
+                        estimated_distance = None
+                        if self.pixel_to_cm_ratio:
+                            estimated_distance = (170 * 400) / (self.pixel_to_cm_ratio * bbox_height)
                         
-                    cv2.rectangle(frame_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                    cv2.putText(frame_display, label, (x1, y1 - 10),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                    
-                    # 显示统计信息
-                    cv2.putText(frame_display, f"当前: {estimated_height:.1f}cm", (10, 30),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    cv2.putText(frame_display, f"平均: {avg_height:.1f}cm", (10, 60),
-                               cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    
-                    if self.recording:
-                        cv2.putText(frame_display, "记录中", (10, 90),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                        # 记录结果
+                        timestamp = datetime.now().strftime("%H:%M:%S")
+                        measurements.append({
+                            'height': avg_height,
+                            'raw_height': estimated_height,
+                            'distance': estimated_distance,
+                            'timestamp': timestamp
+                        })
+                        
+                        # 显示结果
+                        label = f"{avg_height:.1f} cm"
+                        if estimated_distance:
+                            label += f", {estimated_distance:.1f} cm"
+                            
+                        cv2.rectangle(frame_display, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        cv2.putText(frame_display, label, (x1, y1 - 10),
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            
+            # 处理人脸检测
+            elif class_name == "face":
+                # 检查是否是被标记的人脸
+                face_id = None
+                for fid, (fx1, fy1, fx2, fy2, name) in self.marked_faces.items():
+                    # 使用IOU（交并比）来判断是否是同一个人脸
+                    iou = self.calculate_iou((x1, y1, x2, y2), (fx1, fy1, fx2, fy2))
+                    if iou > 0.5:  # 如果重叠度大于50%
+                        face_id = fid
+                        break
+                
+                if face_id:
+                    # 显示标记的名称
+                    name = self.marked_faces[face_id][4]
+                    cv2.rectangle(frame_display, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                    cv2.putText(frame_display, name, (x1, y1 - 10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+                else:
+                    # 显示未标记的人脸
+                    cv2.rectangle(frame_display, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                    cv2.putText(frame_display, "Face", (x1, y1 - 10),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
         
         # 标定逻辑
         if not self.calibrated and len(persons) == 1 and self.real_height_cm:
@@ -535,6 +566,73 @@ class AdvancedHeightMeasurementApp:
                     self.calibrate_btn.configure(text="重新标定")
         except Exception as e:
             self.status_var.set(f"加载校准数据失败: {str(e)}")
+
+    def toggle_face_marking(self):
+        """切换人脸标记模式"""
+        self.face_marking_mode = not self.face_marking_mode
+        if self.face_marking_mode:
+            self.mark_face_btn.configure(text="取消标记")
+            self.status_var.set("请点击要标记的人脸，然后输入名称")
+            self.video_label.bind("<Button-1>", self.on_face_click)
+        else:
+            self.mark_face_btn.configure(text="开始标记人脸")
+            self.status_var.set("人脸标记已取消")
+            self.video_label.unbind("<Button-1>")
+
+    def on_face_click(self, event):
+        """处理人脸点击事件"""
+        if not self.face_marking_mode:
+            return
+            
+        # 获取点击位置
+        click_x, click_y = event.x, event.y
+        
+        # 在标记的人脸中查找点击位置
+        for face_id, (x1, y1, x2, y2, name) in self.marked_faces.items():
+            if x1 <= click_x <= x2 and y1 <= click_y <= y2:
+                # 如果点击了已标记的人脸，询问是否要修改名称
+                new_name = tk.simpledialog.askstring("修改名称", 
+                                                   f"当前名称: {name}\n请输入新的名称:",
+                                                   initialvalue=name)
+                if new_name:
+                    self.marked_faces[face_id] = (x1, y1, x2, y2, new_name)
+                return
+        
+        # 如果没有点击已标记的人脸，询问是否要添加新标记
+        name = tk.simpledialog.askstring("添加标记", "请输入这个人的名称:")
+        if name:
+            # 在点击位置附近查找人脸
+            for result in self.model(self.current_frame, verbose=False)[0].boxes:
+                cls_id = int(result.cls)
+                if self.model.names[cls_id] == "face":
+                    x1, y1, x2, y2 = map(int, result.xyxy[0])
+                    # 检查点击位置是否在人脸框内
+                    if x1 <= click_x <= x2 and y1 <= click_y <= y2:
+                        face_id = f"face_{len(self.marked_faces)}"
+                        self.marked_faces[face_id] = (x1, y1, x2, y2, name)
+                        self.status_var.set(f"已标记: {name}")
+                        return
+            
+            self.status_var.set("未在点击位置检测到人脸")
+
+    def clear_face_marks(self):
+        """清除所有标记的人脸"""
+        self.marked_faces.clear()
+        self.status_var.set("已清除所有标记")
+
+    def calculate_iou(self, box1, box2):
+        """计算两个边界框的IOU（交并比）"""
+        x1 = max(box1[0], box2[0])
+        y1 = max(box1[1], box2[1])
+        x2 = min(box1[2], box2[2])
+        y2 = min(box1[3], box2[3])
+        
+        intersection = max(0, x2 - x1) * max(0, y2 - y1)
+        box1_area = (box1[2] - box1[0]) * (box1[3] - box1[1])
+        box2_area = (box2[2] - box2[0]) * (box2[3] - box2[1])
+        union = box1_area + box2_area - intersection
+        
+        return intersection / union if union > 0 else 0
 
     def run(self):
         """运行应用程序"""
