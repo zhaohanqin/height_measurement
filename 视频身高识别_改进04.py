@@ -175,7 +175,7 @@ while True:
             persons.append((x1, y1, x2, y2, bbox_height, bbox_width))
 
     # 显示人数统计
-    cv2.putText(frame, f"检测到 {len(persons)} 人", (10, 30),
+    cv2.putText(frame, f"the number of persons are:{len(persons)} ", (10, 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
     # 检测人脸
