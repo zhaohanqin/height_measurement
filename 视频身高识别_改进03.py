@@ -316,13 +316,15 @@ cv2.namedWindow("Height Estimation", cv2.WINDOW_NORMAL)
 fps = 0
 frame_count = 0
 start_time = time.time()
-
 while True:
     try:
         ret, frame = cap.read()
         if not ret:
             print("无法读取视频帧，请检查视频源。")
             break
+    except Exception as e:
+        print(f"读取视频帧时出错: {e}")
+        break
 
     # 如果未标定，尝试使用A4纸进行标定
     if not calibrated:
@@ -435,10 +437,6 @@ while True:
         # 按 q 键退出
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
-
-    except Exception as e:
-        print(f"处理帧时出错: {e}")
-        continue
 
 # 清理资源
 try:
