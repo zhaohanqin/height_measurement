@@ -374,9 +374,9 @@ while True:
 
     # 显示标定状态
     if calibrated:
-        cv2.putText(frame, f"标定值: 1像素={pixel_to_cm_ratio:.4f}cm", (10, 60),
+        cv2.putText(frame, f"Calibration value: 1 pixel={pixel_to_cm_ratio:.4f}cm", (10, 60),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        last_calibration_text = f"上次标定: {int(current_time - last_calibration_time)}秒前"
+        last_calibration_text = f"last time demarcate: {int(current_time - last_calibration_time)}seconds ago"
         cv2.putText(frame, last_calibration_text, (10, 90),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
