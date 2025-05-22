@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <project version="4">
+  <component name="Black">
+    <option name="sdkName" value="py36_heigiht_estimation" />
+  </component>
   <component name="ProjectRootManager" version="2" project-jdk-name="py36_heigiht_estimation" project-jdk-type="Python SDK" />
 </project>

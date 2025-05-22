@@ -1,9 +1,9 @@
 import sys
 import cv2
 import numpy as np
-from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
-                             QHBoxLayout, QPushButton, QLabel, QSpinBox, 
-                             QDoubleSpinBox, QComboBox, QGroupBox, QMessageBox)
+from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
+                               QHBoxLayout, QPushButton, QLabel, QSpinBox,
+                               QDoubleSpinBox, QComboBox, QGroupBox, QMessageBox)
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap
 import os
@@ -12,19 +12,42 @@ from ultralytics import YOLO
 from keras_facenet import FaceNet
 from sklearn.metrics.pairwise import cosine_similarity
 
+
 class HeightMeasurementGUI(QMainWindow):
     def __init__(self):
         super().__init__()
+        #一些变量的状态的初始化
+        self.video_label = None
+        self.calibration_label = None
+        self.calibrated = None
+        self.pixel_to_cm_ratio = None
+        self.MIN_BOTTOM_RATIO = None
+        self.MAX_ASPECT_RATIO = None
+        self.MIN_ASPECT_RATIO = None
+        self.MIN_HEIGHT_RATIO = None
+        self.MIN_CONFIDENCE = None
+        self.calibration_interval = None
+        self.last_calibration_time = None
+        self.face_recognized = None
+        self.FACE_SIMILARITY_THRESHOLD = None
+        self.REFERENCE_HEIGHT = None
+        self.calibration_file = None
+        self.reference_face_file = None
+        self.reference_face_embedding = None
+        self.face_cascade = None
+        self.facenet = None
+        self.model = None
+
         self.setWindowTitle("身高测量系统")
         self.setMinimumSize(1200, 800)
 
         # 初始化模型和参数
         self.init_models()
         self.init_parameters()
-        
+
         # 创建界面
         self.create_ui()
-        
+
         # 初始化视频捕获
         self.cap = None
         self.timer = QTimer()
@@ -55,14 +78,14 @@ class HeightMeasurementGUI(QMainWindow):
         # 新增：标定状态跟踪
         self.last_calibration_time = 0
         self.calibration_interval = 1.0  # 标定间隔（秒）
-        
+
         # 人体检测参数
         self.MIN_CONFIDENCE = 0.3  # 降低置信度阈值
         self.MIN_HEIGHT_RATIO = 0.3  # 降低最小高度比例
         self.MIN_ASPECT_RATIO = 1.2  # 降低最小宽高比
         self.MAX_ASPECT_RATIO = 3.0  # 增加最大宽高比
         self.MIN_BOTTOM_RATIO = 0.5  # 降低最小底部比例
-        
+
         # 加载上次标定结果（如果存在）
         if os.path.exists(self.calibration_file):
             try:
@@ -97,7 +120,7 @@ class HeightMeasurementGUI(QMainWindow):
         # 相机控制
         camera_group = QGroupBox("相机控制")
         camera_layout = QVBoxLayout()
-        
+
         # 相机选择
         camera_select_layout = QHBoxLayout()
         camera_select_layout.addWidget(QLabel("选择相机:"))
@@ -112,19 +135,19 @@ class HeightMeasurementGUI(QMainWindow):
         self.start_button = QPushButton("开始")
         self.start_button.clicked.connect(self.toggle_camera)
         camera_layout.addWidget(self.start_button)
-        
+
         # 拍照按钮
         self.capture_button = QPushButton("拍摄参考照片")
         self.capture_button.clicked.connect(self.capture_reference)
         camera_layout.addWidget(self.capture_button)
-        
+
         camera_group.setLayout(camera_layout)
         control_layout.addWidget(camera_group)
 
         # 参数设置
         params_group = QGroupBox("参数设置")
         params_layout = QVBoxLayout()
-        
+
         # 参考身高设置
         height_layout = QHBoxLayout()
         height_layout.addWidget(QLabel("参考身高(cm):"))
@@ -145,7 +168,7 @@ class HeightMeasurementGUI(QMainWindow):
         self.threshold_spinbox.valueChanged.connect(self.update_threshold)
         threshold_layout.addWidget(self.threshold_spinbox)
         params_layout.addLayout(threshold_layout)
-        
+
         # 标定间隔设置
         interval_layout = QHBoxLayout()
         interval_layout.addWidget(QLabel("标定间隔(秒):"))
@@ -156,11 +179,11 @@ class HeightMeasurementGUI(QMainWindow):
         self.interval_spinbox.valueChanged.connect(self.update_calibration_interval)
         interval_layout.addWidget(self.interval_spinbox)
         params_layout.addLayout(interval_layout)
-        
+
         # 人体检测参数设置
         detection_group = QGroupBox("人体检测参数")
         detection_layout = QVBoxLayout()
-        
+
         # 置信度阈值
         conf_layout = QHBoxLayout()
         conf_layout.addWidget(QLabel("置信度阈值:"))
@@ -171,7 +194,7 @@ class HeightMeasurementGUI(QMainWindow):
         self.conf_spinbox.valueChanged.connect(self.update_min_confidence)
         conf_layout.addWidget(self.conf_spinbox)
         detection_layout.addLayout(conf_layout)
-        
+
         # 最小高度比例
         height_ratio_layout = QHBoxLayout()
         height_ratio_layout.addWidget(QLabel("最小高度比例:"))
@@ -182,7 +205,7 @@ class HeightMeasurementGUI(QMainWindow):
         self.height_ratio_spinbox.valueChanged.connect(self.update_min_height_ratio)
         height_ratio_layout.addWidget(self.height_ratio_spinbox)
         detection_layout.addLayout(height_ratio_layout)
-        
+
         # 最小宽高比
         min_ar_layout = QHBoxLayout()
         min_ar_layout.addWidget(QLabel("最小宽高比:"))
@@ -193,7 +216,7 @@ class HeightMeasurementGUI(QMainWindow):
         self.min_ar_spinbox.valueChanged.connect(self.update_min_aspect_ratio)
         min_ar_layout.addWidget(self.min_ar_spinbox)
         detection_layout.addLayout(min_ar_layout)
-        
+
         # 最大宽高比
         max_ar_layout = QHBoxLayout()
         max_ar_layout.addWidget(QLabel("最大宽高比:"))
@@ -204,7 +227,7 @@ class HeightMeasurementGUI(QMainWindow):
         self.max_ar_spinbox.valueChanged.connect(self.update_max_aspect_ratio)
         max_ar_layout.addWidget(self.max_ar_spinbox)
         detection_layout.addLayout(max_ar_layout)
-        
+
         # 最小底部比例
         bottom_ratio_layout = QHBoxLayout()
         bottom_ratio_layout.addWidget(QLabel("最小底部比例:"))
@@ -215,7 +238,7 @@ class HeightMeasurementGUI(QMainWindow):
         self.bottom_ratio_spinbox.valueChanged.connect(self.update_min_bottom_ratio)
         bottom_ratio_layout.addWidget(self.bottom_ratio_spinbox)
         detection_layout.addLayout(bottom_ratio_layout)
-        
+
         detection_group.setLayout(detection_layout)
         params_layout.addWidget(detection_group)
 
@@ -225,24 +248,24 @@ class HeightMeasurementGUI(QMainWindow):
         # 状态显示
         status_group = QGroupBox("系统状态")
         status_layout = QVBoxLayout()
-        
+
         self.calibration_label = QLabel("标定状态: 未标定")
         self.face_status_label = QLabel("人脸识别状态: 未加载参考人脸")
         self.last_calibration_label = QLabel("上次标定: 无")
-        
+
         status_layout.addWidget(self.calibration_label)
         status_layout.addWidget(self.face_status_label)
         status_layout.addWidget(self.last_calibration_label)
-        
+
         status_group.setLayout(status_layout)
         control_layout.addWidget(status_group)
 
         # 添加弹性空间
         control_layout.addStretch()
-        
+
         control_panel.setLayout(control_layout)
         main_layout.addWidget(control_panel)
-        
+
         # 加载参考人脸
         self.load_reference_face()
 
@@ -307,27 +330,27 @@ class HeightMeasurementGUI(QMainWindow):
     def update_threshold(self, value):
         """更新人脸相似度阈值"""
         self.FACE_SIMILARITY_THRESHOLD = value
-        
+
     def update_calibration_interval(self, value):
         """更新标定间隔"""
         self.calibration_interval = value
-        
+
     def update_min_confidence(self, value):
         """更新最小置信度阈值"""
         self.MIN_CONFIDENCE = value
-        
+
     def update_min_height_ratio(self, value):
         """更新最小高度比例"""
         self.MIN_HEIGHT_RATIO = value
-        
+
     def update_min_aspect_ratio(self, value):
         """更新最小宽高比"""
         self.MIN_ASPECT_RATIO = value
-        
+
     def update_max_aspect_ratio(self, value):
         """更新最大宽高比"""
         self.MAX_ASPECT_RATIO = value
-        
+
     def update_min_bottom_ratio(self, value):
         """更新最小底部比例"""
         self.MIN_BOTTOM_RATIO = value
@@ -345,12 +368,12 @@ class HeightMeasurementGUI(QMainWindow):
 
         # 处理帧
         processed_frame = self.process_frame(frame)
-        
+
         # 转换为Qt图像
         h, w, ch = processed_frame.shape
         bytes_per_line = ch * w
         qt_image = QImage(processed_frame.data, w, h, bytes_per_line, QImage.Format_RGB888)
-        
+
         # 调整大小以适应标签
         scaled_pixmap = QPixmap.fromImage(qt_image).scaled(
             self.video_label.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
@@ -363,65 +386,65 @@ class HeightMeasurementGUI(QMainWindow):
         y1 = max(box1[1], box2[1])
         x2 = min(box1[2], box2[2])
         y2 = min(box1[3], box2[3])
-        
+
         intersection = max(0, x2 - x1) * max(0, y2 - y1)
         box1_area = (box1[2] - box1[0]) * (box1[3] - box1[1])
         box2_area = (box2[2] - box2[0]) * (box2[3] - box2[1])
         union = box1_area + box2_area - intersection
-        
+
         return intersection / union if union > 0 else 0
 
     def detect_persons(self, frame):
         """改进的人体检测函数"""
         frame_height = frame.shape[0]
         frame_width = frame.shape[1]
-        
+
         # 使用多个尺度进行检测
         scales = [1.0, 0.8, 1.2]  # 原始尺寸、缩小、放大
         all_persons = []
-        
+
         for scale in scales:
             # 调整图像大小
             if scale != 1.0:
                 scaled_frame = cv2.resize(frame, (int(frame_width * scale), int(frame_height * scale)))
             else:
                 scaled_frame = frame
-                
+
             # 执行检测
             results = self.model(scaled_frame)[0]
-            
+
             for result in results.boxes:
                 cls_id = int(result.cls)
                 if self.model.names[cls_id] != "person":
                     continue
-                    
+
                 confidence = float(result.conf)
                 if confidence < self.MIN_CONFIDENCE:
                     continue
-                    
+
                 # 获取边界框坐标
                 x1, y1, x2, y2 = map(int, result.xyxy[0])
-                
+
                 # 如果使用了缩放，需要将坐标转换回原始尺寸
                 if scale != 1.0:
                     x1 = int(x1 / scale)
                     y1 = int(y1 / scale)
                     x2 = int(x2 / scale)
                     y2 = int(y2 / scale)
-                
+
                 # 计算边界框属性
                 bbox_height = y2 - y1
                 bbox_width = x2 - x1
                 aspect_ratio = bbox_height / bbox_width
                 bottom_ratio = y2 / frame_height
-                
+
                 # 放宽检测条件
                 is_valid_person = (
-                    bottom_ratio >= self.MIN_BOTTOM_RATIO and  # 降低底部比例要求
-                    self.MIN_ASPECT_RATIO <= aspect_ratio <= self.MAX_ASPECT_RATIO and  # 放宽宽高比范围
-                    bbox_height >= frame_height * self.MIN_HEIGHT_RATIO  # 降低最小高度要求
+                        bottom_ratio >= self.MIN_BOTTOM_RATIO and  # 降低底部比例要求
+                        self.MIN_ASPECT_RATIO <= aspect_ratio <= self.MAX_ASPECT_RATIO and  # 放宽宽高比范围
+                        bbox_height >= frame_height * self.MIN_HEIGHT_RATIO  # 降低最小高度要求
                 )
-                
+
                 if is_valid_person:
                     # 检查是否与已检测到的人体重叠
                     overlap = False
@@ -436,10 +459,10 @@ class HeightMeasurementGUI(QMainWindow):
                                 all_persons.remove(existing_person)
                                 all_persons.append((x1, y1, x2, y2, bbox_height, bbox_width, confidence))
                             break
-                    
+
                     if not overlap:
                         all_persons.append((x1, y1, x2, y2, bbox_height, bbox_width, confidence))
-        
+
         return all_persons
 
     def process_frame(self, frame):
@@ -448,15 +471,15 @@ class HeightMeasurementGUI(QMainWindow):
         persons = self.detect_persons(frame)
 
         # 显示人数统计
-        cv2.putText(frame, f"检测到 {len(persons)} 人", (10, 30),
+        cv2.putText(frame, f"The number of person:{len(persons)}", (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
         # 检测人脸
         faces = self.detect_face(frame)
-        
+
         # 获取当前时间（用于控制标定频率）
         current_time = time.time()
-        
+
         # 处理每个检测到的人
         for i, (x1, y1, x2, y2, bbox_height, bbox_width, confidence) in enumerate(persons, 1):
             has_face = False
@@ -464,19 +487,19 @@ class HeightMeasurementGUI(QMainWindow):
             face_scale = 1.0
 
             for (fx, fy, fw, fh) in faces:
-                face_center_x = fx + fw//2
-                face_center_y = fy + fh//2
-                
+                face_center_x = fx + fw // 2
+                face_center_y = fy + fh // 2
+
                 margin = 0.1
                 x_margin = bbox_width * margin
                 y_margin = bbox_height * margin
-                
-                if (x1 - x_margin <= face_center_x <= x2 + x_margin and 
-                    y1 - y_margin <= face_center_y <= y2 + y_margin):
+
+                if (x1 - x_margin <= face_center_x <= x2 + x_margin and
+                        y1 - y_margin <= face_center_y <= y2 + y_margin):
                     has_face = True
                     face_scale = fw / bbox_width
-                    
-                    face_roi = frame[fy:fy+fh, fx:fx+fw]
+
+                    face_roi = frame[fy:fy + fh, fx:fx + fw]
                     if self.face_recognized and self.is_reference_face(face_roi):
                         is_you = True
                         # 每次检测到参考人脸都进行标定（但控制频率）
@@ -489,12 +512,12 @@ class HeightMeasurementGUI(QMainWindow):
                                 self.last_calibration_time = current_time
                                 self.calibration_label.setText(f"标定状态: 已标定 (1像素={ratio:.4f}cm)")
                                 self.last_calibration_label.setText("上次标定: 刚刚")
-                        cv2.rectangle(frame, (fx, fy), (fx+fw, fy+fh), (0, 0, 255), 2)
-                        cv2.putText(frame, f"You ({confidence:.2f})", (fx, fy-10),
+                        cv2.rectangle(frame, (fx, fy), (fx + fw, fy + fh), (0, 0, 255), 2)
+                        cv2.putText(frame, f"You ({confidence:.2f})", (fx, fy - 10),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
                     else:
-                        cv2.rectangle(frame, (fx, fy), (fx+fw, fy+fh), (0, 255, 255), 2)
-                        cv2.putText(frame, f"Face ({confidence:.2f})", (fx, fy-10),
+                        cv2.rectangle(frame, (fx, fy), (fx + fw, fy + fh), (0, 255, 255), 2)
+                        cv2.putText(frame, f"Face ({confidence:.2f})", (fx, fy - 10),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
                     break
 
@@ -521,7 +544,7 @@ class HeightMeasurementGUI(QMainWindow):
                     label = f"Person {i}: {estimated_height_cm:.1f} cm ({confidence:.2f})"
                 else:
                     label = f"Person {i} ({confidence:.2f})"
-                
+
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             label_y = max(y1 - 10, 30)
             cv2.putText(frame, label, (x1, label_y),
@@ -529,12 +552,12 @@ class HeightMeasurementGUI(QMainWindow):
 
         # 显示标定状态
         if self.calibrated:
-            cv2.putText(frame, f"标定值: 1像素={self.pixel_to_cm_ratio:.4f}cm", (10, 60),
+            cv2.putText(frame, f"Calibration value: 1 pixel={self.pixel_to_cm_ratio:.4f}cm", (10, 60),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
             elapsed_time = int(current_time - self.last_calibration_time)
             if elapsed_time > 0:
-                self.last_calibration_label.setText(f"上次标定: {elapsed_time}秒前")
-                cv2.putText(frame, f"上次标定: {elapsed_time}秒前", (10, 90),
+                self.last_calibration_label.setText(f"last time demarcate: {elapsed_time}seconds ago")
+                cv2.putText(frame, f"last time demarcate: {elapsed_time}seconds ago", (10, 90),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
         # 转换颜色空间
@@ -587,13 +610,13 @@ class HeightMeasurementGUI(QMainWindow):
                 ref_img = cv2.imread(self.reference_face_file)
                 if ref_img is None:
                     raise Exception("无法读取参考图片")
-                    
+
                 gray = cv2.cvtColor(ref_img, cv2.COLOR_BGR2GRAY)
                 faces = self.face_cascade.detectMultiScale(gray, 1.1, 5)
-                
+
                 if len(faces) > 0:
                     x, y, w, h = faces[0]
-                    face_roi = ref_img[y:y+h, x:x+w]
+                    face_roi = ref_img[y:y + h, x:x + w]
                     self.reference_face_embedding = self.get_face_embedding(face_roi)
                     return True
             except Exception as e:
@@ -608,6 +631,7 @@ class HeightMeasurementGUI(QMainWindow):
                 f.write(str(pixel_to_cm_ratio))
             return True, pixel_to_cm_ratio
         return False, None
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
